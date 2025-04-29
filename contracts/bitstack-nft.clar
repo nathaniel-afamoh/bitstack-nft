@@ -77,3 +77,83 @@
     { token-id: uint, owner: principal }
     { shares: uint }
 )
+
+;; Staking Rewards Tracking
+(define-map staking-rewards
+    { token-id: uint }
+    { 
+        accumulated-yield: uint,
+        last-claim: uint
+    }
+)
+
+;; Private Helper Functions
+
+(define-private (validate-uri (uri (string-ascii 256)))
+    (let
+        (
+            (uri-len (len uri))
+        )
+        (and
+            (> uri-len u0)
+            (<= uri-len u256)
+        )
+    )
+)
+
+(define-private (validate-recipient (recipient principal))
+    (not (is-eq recipient (as-contract tx-sender)))
+)
+
+(define-private (safe-add (a uint) (b uint))
+    (let
+        (
+            (sum (+ a b))
+        )
+        (asserts! (>= sum a) err-overflow)
+        (ok sum)
+    )
+)
+
+;; Core NFT Functions
+
+(define-public (mint-nft (uri (string-ascii 256)) (collateral uint))
+    (let
+        (
+            (token-id (+ (var-get total-supply) u1))
+            (collateral-requirement (/ (* (var-get min-collateral-ratio) collateral) u100))
+        )
+        (asserts! (validate-uri uri) err-invalid-uri)
+        (asserts! (>= (stx-get-balance tx-sender) collateral-requirement) err-insufficient-collateral)
+        (try! (stx-transfer? collateral-requirement tx-sender (as-contract tx-sender)))
+        (map-set tokens
+            { token-id: token-id }
+            {
+                owner: tx-sender,
+                uri: uri,
+                collateral: collateral,
+                is-staked: false,
+                stake-timestamp: u0,
+                fractional-shares: u0
+            }
+        )
+        (var-set total-supply token-id)
+        (ok token-id)
+    )
+)
+
+(define-public (transfer-nft (token-id uint) (recipient principal))
+    (let
+        (
+            (token (unwrap! (get-token-info token-id) err-invalid-token))
+        )
+        (asserts! (validate-recipient recipient) err-invalid-recipient)
+        (asserts! (is-eq tx-sender (get owner token)) err-not-token-owner)
+        (asserts! (not (get is-staked token)) err-already-staked)
+        (map-set tokens
+            { token-id: token-id }
+            (merge token { owner: recipient })
+        )
+        (ok true)
+    )
+)
